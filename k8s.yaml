@@ -1,0 +1,138 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: jira-clone
+spec:
+  selector:
+    app: jira-clone
+  ports:
+    - port: 7777
+      targetPort: 8080
+  type: LoadBalancer
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jira-clone
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jira-clone
+  template:
+    metadata:
+      labels:
+        app: jira-clone
+    spec:
+      containers:
+        - name: jira-clone
+          image: testomaticai/testomatic:jira-clone
+          command: ["npm"]
+          args: ["run", "start"]
+          ports:
+            - containerPort: 8080
+          env:
+            - name: NODE_ENV
+              value: "development"
+            - name: DB_HOST
+              value: "http://postgres"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USERNAME
+              value: "jirauser"
+            - name: DB_PASSWORD
+              value: "jirapassword"
+            - name: DB_DATABASE
+              value: "jira_development"
+            - name: JWT_SECRET
+              value: "development12345"
+          imagePullPolicy: Always
+      imagePullSecrets:
+        - name: regcred
+---
+# Create ConfigMap postgres-secret for the postgres app
+# Define default database name, user, and password
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-secret
+  labels:
+    app: postgres
+data:
+  POSTGRES_DB: jira_development
+  POSTGRES_USER: jirauser
+  POSTGRES_PASSWORD: jirapassword
+---
+apiVersion: v1
+kind: PersistentVolume # Create PV 
+metadata:
+  name: postgres-volume # Sets PV name
+  labels:
+    type: local # Sets PV's type
+    app: postgres
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 1Gi # Sets PV's size
+  accessModes:
+    - ReadWriteMany
+  hostPath:
+    path: "/data/postgresql" # Sets PV's host path
+---
+apiVersion: v1
+kind: PersistentVolumeClaim # Create PVC
+metadata:
+  name: postgres-volume-claim # Sets PVC's name
+  labels:
+    app: postgres # Defines app to create PVC for
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi # Sets PVC's size
+---
+apiVersion: apps/v1
+kind: Deployment # Create a deployment
+metadata:
+  name: postgres # Set the name of the deployment
+spec:
+  replicas: 1 # Set 1 deployment replica
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:12.10 # Docker image
+          imagePullPolicy: "IfNotPresent"
+          ports:
+            - containerPort: 5432 # Exposing the container port 5432 for PostgreSQL client connections.
+          envFrom:
+            - configMapRef:
+                name: postgres-secret # Using the ConfigMap postgres-secret
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: postgresdata
+      volumes:
+        - name: postgresdata
+          persistentVolumeClaim:
+            claimName: postgres-volume-claim
+---
+apiVersion: v1
+kind: Service # Create service
+metadata:
+  name: postgres # Sets the service name
+  labels:
+    app: postgres # Defines app to create service for
+spec:
+  type: NodePort # Sets the service type
+  ports:
+    - port: 5432 # Sets the port to run the postgres application
+  selector:
+    app: postgres
